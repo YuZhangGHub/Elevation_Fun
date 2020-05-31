@@ -1,6 +1,7 @@
 #include "VTile.h"
 #include "VTileLoader.h" //For file path constants
 #include "stb_image.h"
+#include "tiny_gltf.h"
 
 using namespace std;
 
@@ -11,9 +12,6 @@ VTile::~VTile() {}
 VTile::VTile(Vector2i tileIndices, Vector2f position, Vector2f coordinates, float width, int level):
 	m_tileIndices(tileIndices), m_position(position), m_coordinates(coordinates), m_tileWidth(width), m_level(level) {
 
-	if (tileIndices.Y == 26907 && tileIndices.X == 5564) {
-		int kk = 0;
-	}
 
 	if (!VTileLoader::s_TilesFilePath.empty()) {
 		m_imageFile = VTileLoader::s_TilesFilePath + "\\" + to_string(level) + "\\" + to_string(tileIndices.Y) + "\\" + to_string(tileIndices.X) + ".png";
@@ -91,9 +89,8 @@ sf::Texture VTile::getTexture() { // TODO: remove after demo is done
 }
 #endif
 
-unsigned char* VTile::getTexture(int& width, int& height) {
-	int nrChannels = 0;
-	return stbi_load(m_imageFile.c_str(), &width, &height, &nrChannels, 0);
+unsigned char* VTile::getTexture(int& width, int& height, int& nChannel) {
+	return stbi_load(m_imageFile.c_str(), &width, &height, &nChannel, 0);
 }
 
 void VTile::loadImage()
@@ -110,6 +107,8 @@ void VTile::loadElevation()
 
 	elevationTile.init(elevationFileName.c_str(), m_level);
 	elevationTile.readElevationsByFloat();
+
+	elevationTile.setMeshTranslate(1.0f, 1.0f, 1.0f, this->m_position.X, this->m_position.Y, 0);
 }
 
 void VTile::loadGltf()
@@ -144,28 +143,216 @@ void VTile::loadFile(string& filename, shared_ptr<char[]>& store, unsigned& size
 	file.close();
 }
 
-bool VTile::getTileVertices(float* vertices, int& verticesLen, int offsetStart, int simplifyStep) {
+int VTile::getTileVertexArraySize() const {
+	if (elevationTile.isValid()) {
+		return elevationTile.getVerticesArraySize();
+	}
+
+	return -1;
+}
+
+
+bool VTile::getTileVertices(float* vertices, int offsetStart, int simplifyStep) {
 	if (elevationTile.isValid()) {
 		elevationTile.getVertices(vertices, offsetStart, simplifyStep);
-		verticesLen = elevationTile.getVerticesArraySize();
 		return true;
 	}
 
 	return false;
 }
 
-bool VTile::getTileIndices(unsigned int* indices, int& indicesLen, int offsetStart, int simplifyStep) {
+int VTile::getTileIndexArraySize() const {
+	if (elevationTile.isValid()) {
+		return elevationTile.getIndicesArraySize();
+	}
+
+	return -1;
+}
+
+bool VTile::getTileIndices(unsigned int* indices, int offsetStart, int simplifyStep) {
 	if (elevationTile.isValid()) {
 		elevationTile.getIndices(indices, offsetStart, simplifyStep);
-		indicesLen = elevationTile.getIndicesArraySize();
 		return true;
 	}
 
 	return false;
 }
 
-void VTile::setMeshTranslate(const Vector3f& scale, const Vector3f& offset) {
+bool VTile::computeNormals(float* vertices, int vertexCount, unsigned int* indices, int indexCount) {
 	if (elevationTile.isValid()) {
-		elevationTile.setMeshTranslate(scale.X, scale.Y, scale.Z, offset.X, offset.Y, offset.Z);
+		elevationTile.computeNormals(vertices, vertexCount, indices, indexCount);
+		return true;
 	}
+
+	return false;
 }
+
+tinygltf::Model& VTile::buildGltfModel() {
+	// Rebuild mesh into gltf model;
+	gltfModel.accessors.clear();
+	gltfModel.buffers.clear();
+	gltfModel.bufferViews.clear();
+	gltfModel.images.clear();
+	gltfModel.materials.clear();
+	gltfModel.meshes.clear();
+	gltfModel.nodes.clear();
+	gltfModel.scenes.clear();
+	gltfModel.textures.clear();
+
+    const int verticesLen = elevationTile.getVerticesArraySize();
+    float* vertices = new float[verticesLen];
+    int indexLen = elevationTile.getIndicesArraySize();
+    unsigned int* indices = new unsigned int[indexLen];
+
+    elevationTile.getVertices(vertices, 0);
+    elevationTile.getIndices(indices, 0);
+    elevationTile.computeNormals(vertices, verticesLen, indices, indexLen);
+
+    //Fill in byte data into buffer_vertex
+    tinygltf::Buffer buffer_vertex;
+    for (int i = 0; i < verticesLen; i++) {
+        float value = vertices[i];
+        unsigned char* pdata = (unsigned char*)&value;
+
+        for (int j = 0; j < 4; j++) {
+            buffer_vertex.data.push_back(*pdata++);
+        }
+    }
+
+    //Fill in byte data into buffer_indices
+    tinygltf::Buffer buffer_indices;
+    for (int i = 0; i < indexLen; i++) {
+        unsigned int value = indices[i];
+        unsigned char* pdata = (unsigned char*)&value;
+
+        for (int j = 0; j < 4; j++) {
+            buffer_indices.data.push_back(*pdata++);
+        }
+    }
+
+    //Fill in image byte data into buffer_image
+    int width = 0;
+    int height = 0;
+    int nChannel = 0;
+    unsigned char* image_data = getTexture(width, height, nChannel);
+    tinygltf::Buffer buffer_image;
+    int image_size = height * width * nChannel;
+    for (int i = 0; i < image_size; i++) {
+        buffer_image.data.push_back(image_data[i]);
+    }
+
+    gltfModel.buffers.push_back(buffer_vertex);
+    gltfModel.buffers.push_back(buffer_indices);
+    gltfModel.buffers.push_back(buffer_image);
+
+    //Buffer views
+    tinygltf::BufferView bufferVerticesView;
+    bufferVerticesView.buffer = 0;
+    bufferVerticesView.byteLength = buffer_vertex.data.size();
+    bufferVerticesView.byteStride = 32;
+    bufferVerticesView.target = TINYGLTF_TARGET_ARRAY_BUFFER;
+    bufferVerticesView.byteOffset = 0;
+
+    tinygltf::BufferView bufferIndicesView;
+    bufferIndicesView.buffer = 1;
+    bufferIndicesView.byteLength = buffer_indices.data.size();
+    bufferIndicesView.target = TINYGLTF_TARGET_ELEMENT_ARRAY_BUFFER;
+    bufferIndicesView.byteOffset = 0;
+
+    tinygltf::BufferView bufferImageView;
+    bufferImageView.buffer = 2;
+    bufferImageView.byteLength = buffer_image.data.size();
+    bufferImageView.byteOffset = 0;
+
+    gltfModel.bufferViews.push_back(bufferVerticesView);
+    gltfModel.bufferViews.push_back(bufferIndicesView);
+    gltfModel.bufferViews.push_back(bufferImageView);
+
+    //acccessors
+    tinygltf::Accessor accessorPosition;
+    accessorPosition.bufferView = 0;
+    accessorPosition.byteOffset = 0;
+    accessorPosition.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+    accessorPosition.type = TINYGLTF_TYPE_VEC3;
+    accessorPosition.count = verticesLen / 8;
+
+    tinygltf::Accessor accessorNormal;
+    accessorNormal.bufferView = 0;
+    accessorNormal.byteOffset = 12;
+    accessorNormal.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+    accessorNormal.type = TINYGLTF_TYPE_VEC3;
+    accessorNormal.count = verticesLen / 8;
+
+    tinygltf::Accessor accessorTexCoord;
+    accessorTexCoord.bufferView = 0;
+    accessorTexCoord.byteOffset = 24;
+    accessorTexCoord.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+    accessorTexCoord.type = TINYGLTF_TYPE_VEC2;
+    accessorTexCoord.count = verticesLen / 8;
+
+    tinygltf::Accessor accessorIndices;
+    accessorIndices.bufferView = 1;
+    accessorIndices.byteOffset = 0;
+    accessorIndices.componentType = TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT;
+    accessorIndices.type = TINYGLTF_TYPE_SCALAR;
+    accessorIndices.count = indexLen;
+
+    gltfModel.accessors.push_back(accessorPosition);
+    gltfModel.accessors.push_back(accessorNormal);
+    gltfModel.accessors.push_back(accessorTexCoord);
+    gltfModel.accessors.push_back(accessorIndices);
+
+    //Primitive
+    tinygltf::Primitive primitive;
+    primitive.attributes["POSITION"] = 0;
+    primitive.attributes["NORMAL"] = 1;
+    primitive.attributes["TEXCOORD_0"] = 2;
+    primitive.indices = 3;
+    primitive.mode = TINYGLTF_MODE_TRIANGLES;
+
+    //Material
+    tinygltf::TextureInfo ti;
+    ti.index = 0;
+    ti.texCoord = 0;
+    tinygltf::Material material;
+    material.pbrMetallicRoughness.baseColorTexture = ti;
+    material.pbrMetallicRoughness.metallicFactor = 0.0;
+    material.pbrMetallicRoughness.roughnessFactor = 1.0;
+    gltfModel.materials.push_back(material);
+
+    //Texture
+    tinygltf::Texture texture;
+    texture.sampler = 0;
+    texture.source = 0;
+    gltfModel.textures.push_back(texture);
+
+    //Sampler, use default
+    tinygltf::Sampler sampler;
+    gltfModel.samplers.push_back(sampler);
+
+    //Image
+    tinygltf::Image image;
+    image.bufferView = 2;
+    image.bits = 8;
+    image.pixel_type = TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE;
+    image.mimeType = "image/png";
+    image.width = width;
+    image.height = height;
+    gltfModel.images.push_back(image);
+
+    //Hook mesh, node and scene
+    tinygltf::Mesh mesh;
+    tinygltf::Node node;
+    tinygltf::Scene scene;
+    node.mesh = 0;
+    mesh.primitives.push_back(primitive);
+    scene.nodes.push_back(0);
+
+    gltfModel.meshes.push_back(mesh);
+    gltfModel.nodes.push_back(node);
+    gltfModel.scenes.push_back(scene);
+    gltfModel.asset.version = "2.0";
+
+	return this->gltfModel;
+}
+

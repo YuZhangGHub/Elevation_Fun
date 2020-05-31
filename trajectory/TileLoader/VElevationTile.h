@@ -27,6 +27,8 @@ public:
     void getVertices(float* coords, unsigned int arrayOffset = 0, int simplifyStep = 1);
     void getIndices(unsigned int* indices, unsigned int arrayOffset = 0, int simplifyStep = 1);
 
+    void computeNormals(float* vertices, int vertexCount, unsigned int* indices, int indexCount);
+
     // Mesh transform
     void setMeshTranslate(float sX, float sY, float sz, float oX, float oY, float oz);
 

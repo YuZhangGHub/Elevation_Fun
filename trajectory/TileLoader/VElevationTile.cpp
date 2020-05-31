@@ -1,9 +1,28 @@
 #include "VElevationTile.h"
 #include <stdlib.h>
+#include "Vector.h"
 #include "gdal_priv.h"
 
 const double PI = 3.1415926535898;
 const int pixels = 256;
+
+void computerTriangleNormal(float v1x, float v1y, float v1z,
+                            float v2x, float v2y, float v2z,
+                            float v3x, float v3y, float v3z, float* normal)
+{
+    float vc1[3], vc2[3];
+    float a, b, c;
+    double r = 0.0;
+    vc1[0] = v2x - v1x; vc1[1] = v2y - v1y; vc1[2] = v2z - v1z;
+    vc2[0] = v3x - v1x; vc2[1] = v3y - v1y; vc2[2] = v3z - v1z;
+    a = vc1[1] * vc2[2] - vc2[1] * vc1[2];
+    b = vc2[0] * vc1[2] - vc1[0] * vc2[2];
+    c = vc1[0] * vc2[1] - vc2[0] * vc1[1];
+    r = sqrt(a * a + b * b + c * c);
+    normal[0] = a / r;
+    normal[1] = b / r;
+    normal[2] = c / r;
+}
 
 VElevationTile::VElevationTile() {
 }
@@ -34,7 +53,7 @@ void VElevationTile::init(const char* path, int level) {
 }
 
 int  VElevationTile::getVerticesArraySize() const {
-    return (this->rowCount + 1) * (this->colCount + 1) * 5;
+    return (this->rowCount + 1) * (this->colCount + 1) * 8;
 }
 
 int  VElevationTile::getIndicesArraySize() const {
@@ -130,11 +149,14 @@ void VElevationTile::getVertices(float* coords, unsigned int arrayOffset, int si
     // Generate an 2 d array vertices, map each elevations in Z
     for (int row = 0; row < rowCount + simplifyStep; row += simplifyStep) {
         for (int col = 0; col < colCount + simplifyStep; col += simplifyStep) {
-            const int index = (row * (colCount + 1) / simplifyStep + col) * 5 + arrayOffset;
+            const int index = (row * (colCount + 1) / simplifyStep + col) * 8 + arrayOffset;
             coords[index] = row * pixelPerMeter * simplifyStep * scaleX + offsetX;
             coords[index + 1] = col * pixelPerMeter * simplifyStep * scaleY + offsetY;
-            coords[index + 3] = (double)row / (double)rowCount;
-            coords[index + 4] = 1 - (double)col / (double)colCount;
+            coords[index + 3] = 0.0f;
+            coords[index + 4] = 0.0f;
+            coords[index + 5] = 0.0f;
+            coords[index + 6] = (double)row / (double)rowCount;
+            coords[index + 7] = 1 - (double)col / (double)colCount;
 
             int nRow = row;
             int nCol = col;
@@ -142,6 +164,44 @@ void VElevationTile::getVertices(float* coords, unsigned int arrayOffset, int si
             if (col == colCount) nCol = col - 1;
             coords[index + 2] = getElevation(nRow, nCol) * scaleZ + offsetZ;
         }
+    }
+}
+
+void VElevationTile::computeNormals(float* vertices, int vertexCount, unsigned int* indices, int indexCount) {
+
+    for (int i = 0; i < indexCount; i+= 3) {
+        const int first  = indices[i];
+        const int second = indices[i + 1];
+        const int third = indices[i + 2];
+
+        float x1 = vertices[8 * first];
+        float y1 = vertices[8 * first + 1];
+        float z1 = vertices[8 * first + 2];
+
+        float x2 = vertices[8 * second];
+        float y2 = vertices[8 * second + 1];
+        float z2 = vertices[8 * second + 2];
+
+        float x3 = vertices[8 * third];
+        float y3 = vertices[8 * third + 1];
+        float z3 = vertices[8 * third + 2];
+
+        float normal[3];
+
+        computerTriangleNormal(x1, y1, z1, x2, y2, z2, x3, y3, z3, normal);
+
+
+        vertices[8 * first + 3] += normal[0];
+        vertices[8 * first + 4] += normal[1];
+        vertices[8 * first + 5] += normal[2];
+
+        vertices[8 * second + 3] += normal[0];
+        vertices[8 * second + 4] += normal[1];
+        vertices[8 * second + 5] += normal[2];
+
+        vertices[8 * third + 3] += normal[0];
+        vertices[8 * third + 4] += normal[1];
+        vertices[8 * third + 5] += normal[2];
     }
 }
 

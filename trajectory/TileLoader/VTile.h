@@ -7,7 +7,7 @@
 #include "SFML/Graphics.hpp" // TODO: remove after testing png loading ends
 #endif
 #include "VElevationTile.h"
-
+#include "tiny_gltf.h"
 
 class VTile {
 
@@ -38,17 +38,8 @@ public:
 #endif
 
 	////////////////////////////////////////////////////////////
-	/// \Set vertex's global transform for this tile, used for merge tiles into global picture. Need be used before get vertices.
-	///
-	/// \param scale Each vertex's scale
-	/// \param offset Each vertex's offset
-	///
-	////////////////////////////////////////////////////////////
-	void       setMeshTranslate(const Vector3f& scale, const Vector3f& offset);
-
-	////////////////////////////////////////////////////////////
 	/// \brief get Tile with Dem's vertices array, pass an array in with its offset, then it will fill
-	/// in data by vertices by 5 floats: x, y, z, u, v
+	/// in data by vertices by 8 floats: x, y, z, nx, ny, nz, u, v
 	///
 	/// \param vertices Pass in float array, need be allocated outside. x, y, z will be meters and the origin(0, 0, ele) will be left top
 	/// \param verticesLen Output vertex array length in this tile, will be 5 * vertex count
@@ -56,7 +47,9 @@ public:
 	/// \param simplifyStep Pass in resample step for meshes, default 1, if it is 2, means each 2 dem point will have one sampling vertex.
 	///
 	////////////////////////////////////////////////////////////
-	bool       getTileVertices(float* vertices, int& verticesLen, int offsetStart = 0, int simplifyStep = 1);
+	bool          getTileVertices(float* vertices, int offsetStart = 0, int simplifyStep = 1);
+
+	int           getTileVertexArraySize() const;
 
     ////////////////////////////////////////////////////////////
 	/// \brief Get Tile with Dem square's triangles£¬pass in an arry with its offset. 
@@ -67,7 +60,30 @@ public:
 	/// \param simplifyStep Pass in resample step for meshes, default 1, if it is 2, means each 2 dem point will have one sampling vertex.
 	///
 	////////////////////////////////////////////////////////////
-	bool       getTileIndices(unsigned int* indices, int& indicesLen, int offsetStart = 0, int simplifyStep = 1);
+	bool          getTileIndices(unsigned int* indices, int offsetStart = 0, int simplifyStep = 1);
+
+	int           getTileIndexArraySize() const;
+
+	////////////////////////////////////////////////////////////
+	/// \brief computer normal to fill nx, ny, nz
+	///
+	/// \param vertices Passed in float array
+	/// \param vertexCount, float array valid all size
+	/// \param indices Pass in unsigned array of indices
+	/// \param indexArrayLen unsigned array length of indices
+	///  Sample code:
+	/// if (pTile->getIndices().X == 5564 && pTile->getIndices().Y == 26907) {
+	/// float vertices[2500];
+	/// unsigned int indices[2000];
+	/// int nCount = pTile->getTileVertexArraySize();
+	/// bool success = pTile->getTileVertices(vertices);
+	/// success = pTile->getTileIndices(indices);
+	/// int nIndexCount = pTile->getTileIndexArraySize();
+	/// success = pTile->computeNormals(vertices, nCount, indices, nIndexCount);
+    ///}
+	///
+	////////////////////////////////////////////////////////////
+	bool          computeNormals(float* vertices, int vertexArrayLen, unsigned int* indices, int indexArrayLen);
 
 	////////////////////////////////////////////////////////////
 	/// \brief Get Texture
@@ -76,7 +92,13 @@ public:
 	/// \param height Output height
 	///
 	////////////////////////////////////////////////////////////
-	unsigned char* getTexture(int& width, int& height);
+	unsigned char* getTexture(int& width, int& height, int& nChannel);
+
+	////////////////////////////////////////////////////////////
+	/// \brief Build a gltf model, returns the reference of gltf model
+	///
+	////////////////////////////////////////////////////////////
+	tinygltf::Model& buildGltfModel();
 
 private:
 
@@ -103,6 +125,8 @@ private:
 	sf::Texture tileTexture;
 #endif
 	VElevationTile elevationTile;
+
+	tinygltf::Model gltfModel;
 
 	void loadImage();
 	void loadElevation();
